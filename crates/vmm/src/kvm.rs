@@ -1,18 +1,37 @@
-//! Linux/KVM arka ucu: VM ve vCPU kurulumu, çıkış döngüsü.
+//! Linux/KVM arka ucu: `hv` trait'lerinin KVM uygulaması.
 
-use crate::boot::{self, segment_from_gdt, GDT};
-use crate::devices::{Bus, Device, I8042, Irq, Serial, StopFlag, StopReason};
+use crate::boot::{self, LongModeState};
+use crate::devices::Irq;
+use crate::hv::{CpuInit, HvResult, Hypervisor, Vcpu, VcpuExit, Vm};
 use crate::mem::GuestMem;
-use crate::virtio::{Block, MmioTransport, Rng};
-use crate::{console, Config, MMIO_BASE, MMIO_STRIDE};
 use kvm_bindings::{
     kvm_fpu, kvm_pit_config, kvm_regs, kvm_segment, kvm_userspace_memory_region, KVM_MAX_CPUID_ENTRIES,
     KVM_PIT_SPEAKER_DUMMY,
 };
-use kvm_ioctls::{Kvm, VcpuExit, VcpuFd, VmFd};
-use std::error::Error;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use kvm_ioctls::{Kvm, VcpuFd, VmFd};
+use std::sync::Arc;
+
+pub struct KvmHypervisor {
+    kvm: Arc<Kvm>,
+}
+
+impl KvmHypervisor {
+    pub fn new() -> HvResult<Self> {
+        let kvm = Kvm::new().map_err(|e| format!("/dev/kvm açılamadı ({e}). KVM etkin mi, kullanıcınız 'kvm' grubunda mı?"))?;
+        Ok(KvmHypervisor { kvm: Arc::new(kvm) })
+    }
+}
+
+pub struct KvmVm {
+    kvm: Arc<Kvm>,
+    fd: Arc<VmFd>,
+    // Bellek eşlemesi VM yaşadıkça geçerli kalmalı.
+    _mem: Arc<GuestMem>,
+}
+
+pub struct KvmVcpu {
+    fd: VcpuFd,
+}
 
 struct KvmIrq {
     vm: Arc<VmFd>,
@@ -22,6 +41,82 @@ impl Irq for KvmIrq {
     fn trigger(&self) {
         let _ = self.vm.set_irq_line(self.gsi, true);
         let _ = self.vm.set_irq_line(self.gsi, false);
+    }
+}
+
+impl Hypervisor for KvmHypervisor {
+    type Vm = KvmVm;
+
+    fn name(&self) -> &'static str {
+        "KVM"
+    }
+
+    fn create_vm(&self, mem: Arc<GuestMem>) -> HvResult<KvmVm> {
+        let vm = self.kvm.create_vm()?;
+        vm.set_tss_address(0xfffb_d000)?;
+        vm.create_irq_chip()?;
+        vm.create_pit2(kvm_pit_config { flags: KVM_PIT_SPEAKER_DUMMY, ..Default::default() })?;
+        unsafe {
+            vm.set_user_memory_region(kvm_userspace_memory_region {
+                slot: 0,
+                flags: 0,
+                guest_phys_addr: 0,
+                memory_size: mem.size() as u64,
+                userspace_addr: mem.host_addr(),
+            })?;
+        }
+        Ok(KvmVm { kvm: self.kvm.clone(), fd: Arc::new(vm), _mem: mem })
+    }
+}
+
+impl Vm for KvmVm {
+    type Vcpu = KvmVcpu;
+
+    fn irq_line(&self, gsi: u32) -> Arc<dyn Irq> {
+        Arc::new(KvmIrq { vm: self.fd.clone(), gsi })
+    }
+
+    fn create_vcpu(&self, init: &CpuInit) -> HvResult<KvmVcpu> {
+        let fd = self.fd.create_vcpu(init.id as u64)?;
+        setup_vcpu(&self.kvm, &fd, init)?;
+        Ok(KvmVcpu { fd })
+    }
+}
+
+impl Vcpu for KvmVcpu {
+    fn run(&mut self) -> HvResult<VcpuExit<'_>> {
+        use kvm_ioctls::VcpuExit as K;
+        match self.fd.run() {
+            Ok(K::IoIn(port, data)) => Ok(VcpuExit::IoIn(port, data)),
+            Ok(K::IoOut(port, data)) => Ok(VcpuExit::IoOut(port, data)),
+            Ok(K::MmioRead(addr, data)) => Ok(VcpuExit::MmioRead(addr, data)),
+            Ok(K::MmioWrite(addr, data)) => Ok(VcpuExit::MmioWrite(addr, data)),
+            Ok(K::Hlt) => Ok(VcpuExit::Hlt),
+            Ok(K::Debug(a)) => Ok(VcpuExit::Debug(a.pc)),
+            Ok(K::Shutdown) => Ok(VcpuExit::Shutdown),
+            Ok(K::SystemEvent(t, _)) if t == kvm_bindings::KVM_SYSTEM_EVENT_RESET => Ok(VcpuExit::Reset),
+            Ok(K::SystemEvent(..)) => Ok(VcpuExit::PowerOff),
+            Ok(other) => Ok(VcpuExit::Unknown(format!("{other:?}"))),
+            Err(e) if e.errno() == libc::EINTR || e.errno() == libc::EAGAIN => Ok(VcpuExit::Interrupted),
+            Err(e) => Err(format!("KVM_RUN: {e}").into()),
+        }
+    }
+
+    fn enable_single_step(&mut self) -> HvResult<()> {
+        let d = kvm_bindings::kvm_guest_debug {
+            control: kvm_bindings::KVM_GUESTDBG_ENABLE | kvm_bindings::KVM_GUESTDBG_SINGLESTEP,
+            ..Default::default()
+        };
+        self.fd.set_guest_debug(&d)?;
+        Ok(())
+    }
+
+    fn dump_state(&self) -> Option<String> {
+        let (r, sr) = (self.fd.get_regs().ok()?, self.fd.get_sregs().ok()?);
+        Some(format!(
+            "rip={:#x} rsp={:#x} cr0={:#x} cr3={:#x} cr4={:#x} efer={:#x}",
+            r.rip, r.rsp, sr.cr0, sr.cr3, sr.cr4, sr.efer
+        ))
     }
 }
 
@@ -43,7 +138,8 @@ fn kvm_seg(s: boot::Segment) -> kvm_segment {
     }
 }
 
-fn setup_vcpu(kvm: &Kvm, vcpu: &VcpuFd, id: u8, ncpus: u8, entry: u64, boot_params: u64) -> Result<(), Box<dyn Error>> {
+fn setup_vcpu(kvm: &Kvm, vcpu: &VcpuFd, init: &CpuInit) -> HvResult<()> {
+    let (id, ncpus) = (init.id, init.ncpus);
     // CPUID: KVM'in desteklediği her şey + APIC kimliği + hipervizör biti
     let mut cpuid = kvm.get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)?;
     for e in cpuid.as_mut_slice() {
@@ -72,179 +168,35 @@ fn setup_vcpu(kvm: &Kvm, vcpu: &VcpuFd, id: u8, ncpus: u8, entry: u64, boot_para
     }
     vcpu.set_lapic(&lapic)?;
 
-    // Uzun mod: korumalı kip + sayfalama + PAE + LME/LMA
+    // Uzun kip: korumalı kip + sayfalama + PAE + LME/LMA (değerler boot.rs'de, tüm arka uçlarla ortak)
+    let st: LongModeState = boot::long_mode_state(init.entry, init.boot_params);
     let mut sregs = vcpu.get_sregs()?;
-    let code = kvm_seg(segment_from_gdt(GDT[1], 1));
-    let data = kvm_seg(segment_from_gdt(GDT[2], 2));
-    let mut tss = kvm_seg(segment_from_gdt(GDT[3], 3));
-    tss.s = 0;
-    sregs.cs = code;
+    let data = kvm_seg(st.data);
+    sregs.cs = kvm_seg(st.code);
     sregs.ds = data;
     sregs.es = data;
     sregs.fs = data;
     sregs.gs = data;
     sregs.ss = data;
-    sregs.tr = tss;
-    sregs.gdt.base = boot::GDT_ADDR;
-    sregs.gdt.limit = (GDT.len() * 8 - 1) as u16;
-    sregs.idt.base = boot::IDT_ADDR;
-    sregs.idt.limit = 7;
-    sregs.cr0 |= 0x1 | 0x8000_0000;
-    sregs.cr3 = boot::PML4_ADDR;
-    sregs.cr4 |= 0x20;
-    sregs.efer |= 0x100 | 0x400;
+    sregs.tr = kvm_seg(st.tss);
+    sregs.gdt.base = st.gdt_base;
+    sregs.gdt.limit = st.gdt_limit;
+    sregs.idt.base = st.idt_base;
+    sregs.idt.limit = st.idt_limit;
+    sregs.cr0 |= st.cr0;
+    sregs.cr3 = st.cr3;
+    sregs.cr4 |= st.cr4;
+    sregs.efer |= st.efer;
     vcpu.set_sregs(&sregs)?;
 
     vcpu.set_fpu(&kvm_fpu { fcw: 0x37f, mxcsr: 0x1f80, ..Default::default() })?;
     vcpu.set_regs(&kvm_regs {
-        rflags: 0x2,
-        rip: entry,
-        rsp: boot::BOOT_STACK,
-        rbp: boot::BOOT_STACK,
-        rsi: boot_params,
+        rflags: st.rflags,
+        rip: st.rip,
+        rsp: st.rsp,
+        rbp: st.rsp,
+        rsi: st.rsi,
         ..Default::default()
     })?;
     Ok(())
-}
-
-pub fn run(cfg: &Config) -> Result<StopReason, Box<dyn Error>> {
-    let mem_size = cfg.mem_mib << 20;
-    if mem_size as u64 > boot::MMIO_GAP_START {
-        return Err("bu sürümde en fazla 3072 MiB bellek desteklenir".into());
-    }
-    let kernel = std::fs::read(&cfg.kernel).map_err(|e| format!("çekirdek okunamadı {}: {e}", cfg.kernel.display()))?;
-
-    let kvm = Kvm::new().map_err(|e| format!("/dev/kvm açılamadı ({e}). KVM etkin mi, kullanıcınız 'kvm' grubunda mı?"))?;
-    let vm = Arc::new(kvm.create_vm()?);
-    vm.set_tss_address(0xfffb_d000)?;
-    vm.create_irq_chip()?;
-    vm.create_pit2(kvm_pit_config { flags: KVM_PIT_SPEAKER_DUMMY, ..Default::default() })?;
-
-    let mem = Arc::new(GuestMem::new(mem_size)?);
-    unsafe {
-        vm.set_user_memory_region(kvm_userspace_memory_region {
-            slot: 0,
-            flags: 0,
-            guest_phys_addr: 0,
-            memory_size: mem_size as u64,
-            userspace_addr: mem.host_addr(),
-        })?;
-    }
-
-    let stop = Arc::new(StopFlag::default());
-    let irq = |gsi| -> Arc<dyn Irq> { Arc::new(KvmIrq { vm: vm.clone(), gsi }) };
-
-    // Aygıtlar
-    let serial = Arc::new(Mutex::new(Serial::new(Box::new(std::io::stdout()), irq(4))));
-    let mut pio = Bus::default();
-    pio.insert(0x3f8, 8, serial.clone());
-    pio.insert(0x60, 5, Arc::new(Mutex::new(I8042::new(stop.clone()))));
-
-    let mut mmio = Bus::default();
-    let mut cmdline = cfg.cmdline.clone();
-    let mut slot = 0u64;
-    let mut add_virtio = |dev: Box<dyn crate::virtio::VirtioDevice>, cmdline: &mut String| {
-        let base = MMIO_BASE + slot * MMIO_STRIDE;
-        let gsi = 5 + slot as u32;
-        let t: Arc<Mutex<dyn Device>> = Arc::new(Mutex::new(MmioTransport::new(dev, mem.clone(), irq(gsi))));
-        mmio.insert(base, MMIO_STRIDE, t);
-        cmdline.push_str(&format!(" virtio_mmio.device=4K@{base:#x}:{gsi}"));
-        slot += 1;
-    };
-    let disk = Block::open(&cfg.disk, cfg.disk_read_only).map_err(|e| format!("disk açılamadı {}: {e}", cfg.disk.display()))?;
-    add_virtio(Box::new(disk), &mut cmdline);
-    add_virtio(Box::new(Rng), &mut cmdline);
-
-    // Ağ: virtio-net + kullanıcı alanı NAT (ayrı iş parçacığı)
-    if cfg.net {
-        let base = MMIO_BASE + slot * MMIO_STRIDE;
-        let gsi = 5 + slot as u32;
-        let frames: crate::net::SharedFrames = Arc::default();
-        let t = Arc::new(Mutex::new(MmioTransport::new(Box::new(crate::net::Net::new(frames.clone())), mem.clone(), irq(gsi))));
-        mmio.insert(base, MMIO_STRIDE, t.clone());
-        cmdline.push_str(&format!(" virtio_mmio.device=4K@{base:#x}:{gsi}"));
-        let fwd: Vec<crate::net::PortForward> = cfg.forwards.iter().map(|&(h, g)| crate::net::PortForward { host_port: h, guest_port: g }).collect();
-        crate::net::spawn_stack(frames, &fwd, move || t.lock().unwrap().poll())?;
-    }
-
-    // Önyükleme
-    let mut info = boot::load_bzimage(&mem, &kernel, &cmdline)?;
-    if std::env::var_os("MH_TEST_CODE").is_some() {
-        // uzun kip denetimi: seri porta 'X' yaz ve dön
-        mem.write(0x200_0000, &[0x66, 0xba, 0xf8, 0x03, 0xb0, 0x58, 0xee, 0xeb, 0xfe]);
-        info.entry = 0x200_0000;
-    }
-    boot::setup_page_tables(&mem)?;
-    boot::setup_gdt(&mem)?;
-    boot::setup_mptable(&mem, cfg.vcpus)?;
-
-    let pio = Arc::new(pio);
-    let mmio = Arc::new(mmio);
-    for id in 0..cfg.vcpus {
-        let mut vcpu = vm.create_vcpu(id as u64)?;
-        setup_vcpu(&kvm, &vcpu, id, cfg.vcpus, info.entry, info.boot_params)?;
-        let (pio, mmio, stop) = (pio.clone(), mmio.clone(), stop.clone());
-        let debug = std::env::var_os("MH_DEBUG").is_some();
-        let trace = std::env::var_os("MH_TRACE").is_some();
-        if trace {
-            let d = kvm_bindings::kvm_guest_debug { control: kvm_bindings::KVM_GUESTDBG_ENABLE | kvm_bindings::KVM_GUESTDBG_SINGLESTEP, ..Default::default() };
-            vcpu.set_guest_debug(&d)?;
-        }
-        let mut izler: std::collections::VecDeque<u64> = std::collections::VecDeque::new();
-        let mut adim: u64 = 0;
-        std::thread::Builder::new().name(format!("vcpu{id}")).spawn(move || loop {
-            if stop.get() != StopReason::Running {
-                return;
-            }
-            match vcpu.run() {
-                Ok(VcpuExit::IoIn(port, data)) => {
-                    pio.read(port as u64, data);
-                }
-                Ok(VcpuExit::IoOut(port, data)) => {
-                    if debug && !(0x3f8..0x400).contains(&port) && port != 0x80 { eprintln!("\r[io] out {port:#x} {data:?}\r"); }
-                    pio.write(port as u64, data);
-                }
-                Ok(VcpuExit::MmioRead(addr, data)) => {
-                    mmio.read(addr, data);
-                }
-                Ok(VcpuExit::MmioWrite(addr, data)) => {
-                    mmio.write(addr, data);
-                }
-                Ok(VcpuExit::Hlt) => {}
-                Ok(VcpuExit::Debug(a)) => {
-                    adim += 1;
-                    izler.push_back(a.pc);
-                    if izler.len() > 40 { izler.pop_front(); }
-                    if adim.is_multiple_of(200000) { eprintln!("\r[iz] {adim} adım, rip={:#x}\r", a.pc); }
-                }
-                Ok(VcpuExit::Shutdown) => {
-                    if trace { eprintln!("\r[iz] son adımlar ({adim}): {:x?}\r", izler); }
-                    if std::env::var_os("MH_DEBUG").is_some() {
-                        if let (Ok(r), Ok(sr)) = (vcpu.get_regs(), vcpu.get_sregs()) {
-                            eprintln!("\r\n[metahernes] vcpu{id} triple fault: rip={:#x} rsp={:#x} cr0={:#x} cr3={:#x} cr4={:#x} efer={:#x}\r", r.rip, r.rsp, sr.cr0, sr.cr3, sr.cr4, sr.efer);
-                        }
-                    }
-                    stop.stop(StopReason::GuestReset)
-                }
-                Ok(VcpuExit::SystemEvent(t, _)) => {
-                    stop.stop(if t == kvm_bindings::KVM_SYSTEM_EVENT_RESET { StopReason::GuestReset } else { StopReason::GuestShutdown })
-                }
-                Ok(other) => {
-                    eprintln!("\r\n[metahernes] vcpu{id}: beklenmeyen çıkış: {other:?}\r");
-                    stop.stop(StopReason::Error);
-                }
-                Err(e) if e.errno() == libc::EINTR || e.errno() == libc::EAGAIN => {}
-                Err(e) => {
-                    eprintln!("\r\n[metahernes] vcpu{id}: KVM_RUN hatası: {e}\r");
-                    stop.stop(StopReason::Error);
-                }
-            }
-        })?;
-    }
-
-    console::spawn_stdin(serial, stop.clone());
-    while stop.get() == StopReason::Running {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    Ok(stop.get())
 }

@@ -12,3 +12,6 @@ smoltcp = { version = "0.14", default-features = false, features = ["std", "log"
 kvm-ioctls = "0.25"
 kvm-bindings = { version = "0.14", features = ["fam-wrappers"] }
 vmm-sys-util = "0.15"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_Security_Cryptography"] }

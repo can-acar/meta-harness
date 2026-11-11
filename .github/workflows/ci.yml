@@ -26,3 +26,23 @@ jobs:
         env:
           RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --locked --release -p mh --target x86_64-unknown-linux-gnu
+
+  capraz:
+    name: Derleme denetimi (${{ matrix.hedef }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        hedef: [x86_64-pc-windows-gnu, x86_64-apple-darwin, aarch64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: ${{ matrix.hedef }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.hedef }}
+      # Ana makine tarafı (VMM + başlatıcı) her platformda derlenmeli; mh yalnızca Linux misafiri içindir.
+      - name: Clippy
+        run: cargo clippy --locked -p metahernes -p metahernes-vmm --all-targets --target ${{ matrix.hedef }} -- -D warnings

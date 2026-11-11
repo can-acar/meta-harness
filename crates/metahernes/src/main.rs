@@ -81,8 +81,10 @@ fn main() {
         Komut::Bilgi => {
             println!("metahernes {}", env!("CARGO_PKG_VERSION"));
             println!("hipervizör: {}", metahernes_vmm::backend_name());
-            #[cfg(target_os = "linux")]
-            println!("/dev/kvm: {}", if std::fs::OpenOptions::new().read(true).write(true).open("/dev/kvm").is_ok() { "erişilebilir" } else { "YOK / izin yok" });
+            match metahernes_vmm::check_backend() {
+                Ok(()) => println!("durum: hazır"),
+                Err(e) => println!("durum: kullanılamıyor\n{e}"),
+            }
         }
         Komut::Calistir { cekirdek, imaj, bellek, cpu, ek, salt_okunur, ssh, portlar, ag_yok } => {
             let mut forwards = Vec::new();
