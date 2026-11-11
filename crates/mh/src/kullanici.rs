@@ -1,12 +1,13 @@
 //! mh-kullanici (insan/ajan hesapları) ve mh-anahtar (ajanların ortak API anahtarı).
 
+use crate::ajan::{Arac, AGY_BELIRTEC, OZEL_ANAHTAR_DIZINI};
 use crate::util::{chmod, chown, group, passwd, require_root, run_ok, write_owned, Res};
 use std::io::{BufRead, Write};
 
 const ROLLER: &str = "/etc/metahernes/roller";
 const YARDIM: &str = "\
 mh-kullanici insan <ad> [ssh-açık-anahtar-dosyası] [--yonetici]
-mh-kullanici ajan  <ad> <rol>        rol: /etc/metahernes/roller altındakiler
+mh-kullanici ajan  <ad> <rol> [araç]  rol: /etc/metahernes/roller altındakiler; araç: claude (varsayılan) | codex | agy
 mh-kullanici sil   <ad>
 mh-kullanici liste";
 
@@ -50,7 +51,7 @@ fn insan(ad: &str, anahtar: Option<&str>, yonetici: bool) -> Res {
     Ok(())
 }
 
-fn ajan(ad: &str, rol: &str) -> Res {
+fn ajan(ad: &str, rol: &str, arac: Arac) -> Res {
     gecerli_ad(ad)?;
     gecerli_ad(rol)?;
     let rd = format!("{ROLLER}/{rol}");
@@ -80,11 +81,52 @@ fn ajan(ad: &str, rol: &str) -> Res {
         let icerik = std::fs::read_to_string(format!("{rd}/{f}")).map_err(|e| format!("{rd}/{f}: {e}"))?;
         write_owned(&format!("{cd}/{f}"), &icerik, p.uid, p.gid, 0o644)?;
     }
+    arac_kur(arac, &rd, &ev, p.uid, p.gid)?;
     write_owned(&format!("{ev}/.gitconfig"), &format!("[user]\n\tname = {k}\n\temail = {k}@metahernes.local\n"), p.uid, p.gid, 0o644)?;
     std::fs::create_dir_all("/etc/metahernes/ajanlar").map_err(|e| e.to_string())?;
     std::fs::write(format!("/etc/metahernes/ajanlar/{ad}.rol"), format!("{rol}\n")).map_err(|e| e.to_string())?;
+    std::fs::write(format!("/etc/metahernes/ajanlar/{ad}.arac"), format!("{}\n", arac.ad())).map_err(|e| e.to_string())?;
     onboarding(&ev, p.uid, p.gid)?;
-    println!("ajan eklendi: {ad} (rol: {rol}, kullanıcı: {k})");
+    println!("ajan eklendi: {ad} (rol: {rol}, araç: {}, kullanıcı: {k})", arac.ad());
+    if arac != Arac::Claude {
+        println!("kimlik: mh-ajan {ad} giris  ya da  sudo mh-anahtar --ajan {ad} <dosya>");
+    }
+    Ok(())
+}
+
+/// Sahibi ajan olan dizin zinciri oluşturur (ev altındaki göreli yol).
+fn ajan_dizini(ev: &str, goreli: &str, uid: u32, gid: u32, mod_: u32) -> Res<String> {
+    let mut yol = ev.to_string();
+    for parca in goreli.split('/').filter(|p| !p.is_empty()) {
+        yol = format!("{yol}/{parca}");
+        if !std::path::Path::new(&yol).is_dir() {
+            std::fs::create_dir(&yol).map_err(|e| format!("{yol}: {e}"))?;
+            chown(&yol, uid, gid)?;
+            chmod(&yol, mod_)?;
+        }
+    }
+    Ok(yol)
+}
+
+/// Rolün araca özel dosyalarını ajanın evine kopyalar. Talimatlar (CLAUDE.md) her araca verilir.
+fn arac_kur(arac: Arac, rd: &str, ev: &str, uid: u32, gid: u32) -> Res {
+    let talimat = std::fs::read_to_string(format!("{rd}/CLAUDE.md")).unwrap_or_default();
+    match arac {
+        Arac::Claude => {}
+        Arac::Codex => {
+            let d = ajan_dizini(ev, ".codex", uid, gid, 0o700)?;
+            let ayar = std::fs::read_to_string(format!("{rd}/codex.toml")).map_err(|e| format!("{rd}/codex.toml: {e}"))?;
+            write_owned(&format!("{d}/config.toml"), &ayar, uid, gid, 0o644)?;
+            write_owned(&format!("{d}/AGENTS.md"), &talimat, uid, gid, 0o644)?;
+        }
+        Arac::Agy => {
+            let d = ajan_dizini(ev, ".gemini", uid, gid, 0o700)?;
+            write_owned(&format!("{d}/GEMINI.md"), &talimat, uid, gid, 0o644)?;
+            let m = ajan_dizini(ev, ".metahernes", uid, gid, 0o700)?;
+            let bayrak = std::fs::read_to_string(format!("{rd}/agy-bayraklar")).unwrap_or_default();
+            write_owned(&format!("{m}/agy-bayraklar"), &bayrak, uid, gid, 0o644)?;
+        }
+    }
     Ok(())
 }
 
@@ -99,7 +141,11 @@ pub fn main(args: &[String]) -> Res {
         }
         ["ajan", ad, rol] => {
             require_root()?;
-            ajan(ad, rol)
+            ajan(ad, rol, Arac::Claude)
+        }
+        ["ajan", ad, rol, arac] => {
+            require_root()?;
+            ajan(ad, rol, Arac::coz(arac)?)
         }
         ["sil", ad] => {
             require_root()?;
@@ -107,6 +153,7 @@ pub fn main(args: &[String]) -> Res {
             if passwd(&format!("ajan-{ad}")).is_some() {
                 run_ok(&["userdel", "-r", &format!("ajan-{ad}")])?;
                 let _ = std::fs::remove_file(format!("/etc/metahernes/ajanlar/{ad}.rol"));
+                let _ = std::fs::remove_file(format!("/etc/metahernes/ajanlar/{ad}.arac"));
             } else {
                 run_ok(&["userdel", "-r", ad])?;
             }
@@ -126,29 +173,37 @@ pub fn main(args: &[String]) -> Res {
     }
 }
 
-/// mh-anahtar [dosya]: ajanların ortak Anthropic API anahtarı (yalnızca 'ajanlar' grubu okuyabilir).
+fn gizli_oku(soru: &str) -> String {
+    eprint!("{soru}: ");
+    let _ = std::io::stderr().flush();
+    let mut t: libc::termios = unsafe { std::mem::zeroed() };
+    let tty = unsafe { libc::tcgetattr(0, &mut t) } == 0;
+    if tty {
+        let mut s = t;
+        s.c_lflag &= !libc::ECHO;
+        unsafe { libc::tcsetattr(0, libc::TCSANOW, &s) };
+    }
+    let mut l = String::new();
+    let _ = std::io::stdin().lock().read_line(&mut l);
+    if tty {
+        unsafe { libc::tcsetattr(0, libc::TCSANOW, &t) };
+    }
+    eprintln!();
+    l
+}
+
+/// mh-anahtar [dosya]                ajanların ortak Anthropic API anahtarı (yalnızca 'ajanlar' grubu okuyabilir)
+/// mh-anahtar --ajan <ad> [dosya]    yalnızca o ajanın kendi kimliği (aracına göre):
+///     claude: Anthropic API anahtarı, codex: OpenAI API anahtarı, agy: OAuth belirteç dosyası
 pub fn anahtar(args: &[String]) -> Res {
     require_root()?;
+    if args.first().map(String::as_str) == Some("--ajan") {
+        let ad = args.get(1).ok_or("--ajan için ajan adı gerekli")?;
+        return ajan_anahtari(ad, args.get(2).map(String::as_str));
+    }
     let key = match args.first() {
         Some(f) => std::fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?,
-        None => {
-            eprint!("ANTHROPIC_API_KEY: ");
-            let _ = std::io::stderr().flush();
-            let mut t: libc::termios = unsafe { std::mem::zeroed() };
-            let tty = unsafe { libc::tcgetattr(0, &mut t) } == 0;
-            if tty {
-                let mut s = t;
-                s.c_lflag &= !libc::ECHO;
-                unsafe { libc::tcsetattr(0, libc::TCSANOW, &s) };
-            }
-            let mut l = String::new();
-            let _ = std::io::stdin().lock().read_line(&mut l);
-            if tty {
-                unsafe { libc::tcsetattr(0, libc::TCSANOW, &t) };
-            }
-            eprintln!();
-            l
-        }
+        None => gizli_oku("ANTHROPIC_API_KEY"),
     };
     let key: String = key.chars().filter(|c| !c.is_whitespace()).collect();
     if key.is_empty() {
@@ -157,5 +212,33 @@ pub fn anahtar(args: &[String]) -> Res {
     let gid = group("ajanlar").ok_or("'ajanlar' grubu yok")?.0;
     write_owned(crate::ajan::KEY, &format!("{key}\n"), 0, gid, 0o640)?;
     println!("Kaydedildi. Yalnızca 'ajanlar' grubu okuyabilir; insanlar kendi 'claude' girişini kullanır.");
+    Ok(())
+}
+
+/// Ajana özel kimlik: ajanın evinde, yalnızca o ajanın okuyabileceği (0600) bir dosyaya yazılır.
+fn ajan_anahtari(ad: &str, dosya: Option<&str>) -> Res {
+    gecerli_ad(ad)?;
+    let p = passwd(&format!("ajan-{ad}")).ok_or_else(|| format!("Böyle bir ajan yok: {ad}"))?;
+    let arac = crate::ajan::arac(ad);
+    if arac == Arac::Agy {
+        // OAuth belirteci başka bir makinedeki `agy` girişinden kopyalanır; içerik olduğu gibi saklanır
+        let f = dosya.ok_or("agy için belirteç dosyası gerekli (~/.gemini/antigravity-cli/antigravity-oauth-token) ya da: mh-ajan <ad> giris")?;
+        let icerik = std::fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?;
+        let (dizin, dosya_adi) = AGY_BELIRTEC.rsplit_once('/').unwrap_or(("", AGY_BELIRTEC));
+        let d = ajan_dizini(&p.home, dizin, p.uid, p.gid, 0o700)?;
+        write_owned(&format!("{d}/{dosya_adi}"), &icerik, p.uid, p.gid, 0o600)?;
+    } else {
+        let key = match dosya {
+            Some(f) => std::fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?,
+            None => gizli_oku(if arac == Arac::Codex { "OPENAI_API_KEY" } else { "ANTHROPIC_API_KEY" }),
+        };
+        let key: String = key.chars().filter(|c| !c.is_whitespace()).collect();
+        if key.is_empty() {
+            return Err("boş anahtar".into());
+        }
+        let d = ajan_dizini(&p.home, OZEL_ANAHTAR_DIZINI, p.uid, p.gid, 0o700)?;
+        write_owned(&format!("{d}/{}", arac.ad()), &format!("{key}\n"), p.uid, p.gid, 0o600)?;
+    }
+    println!("Kaydedildi: {ad} ({}). Yalnızca ajan-{ad} okuyabilir.", arac.ad());
     Ok(())
 }

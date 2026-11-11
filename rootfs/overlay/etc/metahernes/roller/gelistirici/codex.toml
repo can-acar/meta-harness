@@ -1,0 +1,8 @@
+# Codex CLI ayarları (ajan evinde ~/.codex/config.toml olur).
+# Kum havuzu: sanal makine + ayrı Linux hesabı. Codex'in kendi Linux kum havuzu (Landlock)
+# çekirdeğimizde yok, bu yüzden danger-full-access; yetki sınırı Linux izinleridir.
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[projects."/srv/proje"]
+trust_level = "trusted"

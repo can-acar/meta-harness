@@ -5,6 +5,7 @@
   mh-ajan liste              ajanları göster
   mh-ajan <ad> "<görev>"     ajana iş ver (ör. mh-ajan gelistirici "testleri yaz")
   mh-ajan <ad> -i            ajanın hesabında etkileşimli oturum
+  mh-ajan <ad> giris         ajanın kendi codex/agy hesabıyla giriş
   /srv/proje                 ortak çalışma alanı
   mh-kapat                   sistemi kapat
 

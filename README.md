@@ -38,7 +38,7 @@ cp ~/.ssh/id_ed25519.pub keys/can.pub            # kullanicilar.conf'taki insan 
 sudo ./build.sh                                  # cekirdek + rust + rootfs + imaj -> cikti/
 ```
 Adımlar ayrı ayrı da çalışır: `./build.sh cekirdek | rust | rootfs | imaj`.
-Ayarlar: `KERNEL_VERSION` (varsayılan 6.12), `KERNEL_SRC`, `MH_SUITE`/`MH_MIRROR`, `CLAUDE_VERSION`, `MH_DISK`, `ANTHROPIC_API_KEY`.
+Ayarlar: `KERNEL_VERSION` (varsayılan 6.12), `KERNEL_SRC`, `MH_SUITE`/`MH_MIRROR`, `CLAUDE_VERSION`, `MH_ARACLAR`, `CODEX_VERSION`, `MH_DISK`, `ANTHROPIC_API_KEY`.
 
 ## Çalıştırma
 
@@ -64,6 +64,21 @@ Henüz kendi VMM'imizin desteklemediği platformlar için geçici yedek: `aracla
 | `mh-ajan inceleyici -i` | Ajan hesabında etkileşimli oturum |
 | `sudo mh-kullanici insan ali ali.pub [--yonetici]` / `ajan <ad> <rol>` / `sil` / `liste` | Hesap yönetimi |
 | `sudo mh-anahtar` | Ajanların ortak API anahtarı (yalnızca `ajanlar` grubu okur) |
+| `sudo mh-kullanici ajan codex-1 gelistirici codex` | Ajanı Claude Code yerine Codex (`codex`) ya da Antigravity (`agy`) ile çalıştırır |
+| `mh-ajan codex-1 giris` | Ajanın **kendi** hesabıyla giriş (codex: cihaz kodu, agy: OAuth); kimlik ajanın evinde kalır |
+| `sudo mh-anahtar --ajan codex-1 [dosya]` | Yalnızca o ajana özel anahtar (claude/codex: API anahtarı, agy: OAuth belirteç dosyası) |
+
+### Codex ve Antigravity ajanları, ayrı kimlikler
+
+Her ajan ayrı bir Linux hesabıdır, bu yüzden her ajanın kimlik bilgisi kendi evinde durur
+(`~/.codex/auth.json`, `~/.gemini/antigravity-cli/antigravity-oauth-token`, `~/.metahernes/anahtarlar/<araç>`).
+Aynı araçtan farklı hesaplarla birden çok örnek açmak için birden çok ajan tanımlayın
+(`kullanicilar.conf`: `ajan codex-1 gelistirici codex`, `ajan codex-2 gelistirici codex`, `ajan agy-1 inceleyici agy`)
+ve hepsini aynı anda çalıştırın. Araçlar imaja `MH_ARACLAR=claude,codex,agy sudo ./build.sh` ile konur.
+
+Sınırlar: Codex ve agy için rolün `settings.json` araç kuralları geçerli değildir; yetki sınırı Linux izinleri
+(`proje` grubu) ve rolün `codex.toml` / `agy-bayraklar` dosyalarıdır. Antigravity API anahtarı kabul etmez,
+her agy ajanı bir kez `mh-ajan <ad> giris` ile (ya da başka makineden kopyalanan belirteçle) oturum açar.
 
 Roller `/etc/metahernes/roller/` altında: `CLAUDE.md` (talimatlar), `settings.json` (Claude Code izinleri), `proje-yazma`.
 İzinler iki katmanlı: Claude Code kuralları **ve** Linux izinleri (ör. `inceleyici` `/srv/proje`ye çekirdek düzeyinde yazamaz).

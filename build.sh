@@ -7,6 +7,8 @@
 #   KERNEL_SRC=/yol            hazır çekirdek kaynak dizini ya da .tar.(xz|gz|bz2) (indirme yapılmaz)
 #   MH_SUITE=noble  MH_MIRROR=http://archive.ubuntu.com/ubuntu   (Debian: bookworm + http://deb.debian.org/debian)
 #   CLAUDE_VERSION=latest      Claude Code sürümü (npm)
+#   MH_ARACLAR=claude          imaja konacak ajan araçları: claude,codex,agy (virgülle)
+#   CODEX_VERSION=latest       OpenAI Codex CLI sürümü (GitHub sürümü, ör. 0.60.0)
 #   MH_DISK=4G                 disk imajı boyutu
 #   ANTHROPIC_API_KEY=...      verilirse ajanların ortak anahtarı imaja yazılır (sonradan: mh-anahtar)
 set -euo pipefail
@@ -16,6 +18,8 @@ KERNEL_VERSION=${KERNEL_VERSION:-6.12}
 MH_SUITE=${MH_SUITE:-noble}
 MH_MIRROR=${MH_MIRROR:-http://archive.ubuntu.com/ubuntu}
 CLAUDE_VERSION=${CLAUDE_VERSION:-latest}
+MH_ARACLAR=${MH_ARACLAR:-claude}
+CODEX_VERSION=${CODEX_VERSION:-latest}
 MH_DISK=${MH_DISK:-4G}
 PAKETLER="bash,ca-certificates,openssh-server,git,curl,sudo,iproute2,iputils-ping,procps,less,nano,ripgrep,util-linux,passwd"
 mkdir -p "$IS" "$CIKTI"
@@ -75,6 +79,9 @@ rootfs() {
   ln -sf /opt/claude-code/claude "$R/usr/local/bin/claude"
   echo "$surum" > "$R/opt/claude-code/VERSION"
 
+  [[ ",$MH_ARACLAR," == *,codex,* ]] && codex_kur "$R"
+  [[ ",$MH_ARACLAR," == *,agy,* ]] && agy_kur "$R"
+
   adim "mh (Rust) misafir ikilisi"
   local MH=$CIKTI/mh
   [ -x "$MH" ] || mh_derle
@@ -96,6 +103,36 @@ rootfs() {
   chroot "$R" /bin/bash /tmp/kur.sh
   rm -rf "$R/tmp/"* "$R/var/cache/apt/"*.bin "$R/var/lib/apt/lists/"* "$R/etc/ssh/ssh_host_"*
   echo "rootfs: $(du -sh "$R" | cut -f1)"
+}
+
+codex_kur() {
+  local R=$1
+  adim "OpenAI Codex CLI ($CODEX_VERSION)"
+  # Statik musl ikilisi: Node gerekmez
+  local varlik=codex-x86_64-unknown-linux-musl url
+  if [ "$CODEX_VERSION" = latest ]; then url=https://github.com/openai/codex/releases/latest/download/$varlik.tar.gz
+  else url=https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/$varlik.tar.gz; fi
+  local tgz=$IS/codex-$CODEX_VERSION.tar.gz
+  [ -f "$tgz" ] || curl -fL --progress-bar -o "$tgz" "$url"
+  mkdir -p "$R/opt/codex"
+  tar xzf "$tgz" -C "$R/opt/codex"
+  mv "$R/opt/codex/$varlik" "$R/opt/codex/codex"
+  ln -sf /opt/codex/codex "$R/usr/local/bin/codex"
+}
+
+agy_kur() {
+  local R=$1
+  adim "Google Antigravity CLI (agy)"
+  # Resmî kurulum betiği ikiliyi $HOME/.local/bin'e koyar; geçici bir ev dizini kullanıp imaja taşıyoruz
+  local ev=$IS/agy-ev
+  if [ ! -e "$ev/.local/bin/agy" ]; then
+    rm -rf "$ev"; mkdir -p "$ev"
+    curl -fsSL https://antigravity.google/cli/install.sh | HOME=$ev SHELL=/bin/bash bash
+  fi
+  mkdir -p "$R/opt/agy"
+  cp -L "$ev/.local/bin/agy" "$R/opt/agy/agy"
+  chmod 755 "$R/opt/agy/agy"
+  ln -sf /opt/agy/agy "$R/usr/local/bin/agy"
 }
 
 mh_derle() {
@@ -120,5 +157,5 @@ bagimliliklar
 case "${1:-hepsi}" in
   cekirdek) cekirdek;; rust) mh_derle;; rootfs) rootfs;; imaj) imaj;;
   hepsi) cekirdek; mh_derle; rootfs; imaj;;
-  *) sed -n '2,12p' "$0"; exit 1;;
+  *) sed -n '2,14p' "$0"; exit 1;;
 esac
