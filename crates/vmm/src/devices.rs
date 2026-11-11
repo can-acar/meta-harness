@@ -15,9 +15,12 @@ pub trait Device: Send {
     fn write(&mut self, offset: u64, data: &[u8]);
 }
 
+/// Veri yolundaki bir kayıt: (taban, uzunluk, aygıt).
+type Aralik = (u64, u64, Arc<Mutex<dyn Device>>);
+
 #[derive(Default, Clone)]
 pub struct Bus {
-    ranges: Vec<(u64, u64, Arc<Mutex<dyn Device>>)>,
+    ranges: Vec<Aralik>,
 }
 
 impl Bus {

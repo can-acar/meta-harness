@@ -6,6 +6,7 @@
 //! - TCP: misafirin her bağlantısı smoltcp ile karşılanır, ana makinede gerçek bir TcpStream açılır ve veri aktarılır.
 //! - UDP: akış başına ana makine UdpSocket'i; 10.0.2.3:53 ana makinenin DNS sunucusuna iletilir.
 //! - Port yönlendirme: ana makine 127.0.0.1:P -> misafir :Q (ör. SSH 2222 -> 22).
+//!
 //! Yalnızca std::net kullanır; Linux, macOS ve Windows'ta aynı şekilde çalışır.
 
 use crate::mem::GuestMem;

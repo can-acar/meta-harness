@@ -1,0 +1,4 @@
+/target/
+/cikti/
+# İnsanların SSH anahtarları derleme sırasında eklenir, depoya girmez
+/keys/*.pub

@@ -188,10 +188,10 @@ pub fn main() -> ! {
     network();
 
     let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
-    if cmdline.split_whitespace().any(|w| w == "mh_paylas=1") {
-        if mount("proje", "/srv/proje", "9p", 0, "trans=virtio,version=9p2000.L,msize=262144,access=any") {
-            log("paylaşılan klasör /srv/proje'ye bağlandı");
-        }
+    if cmdline.split_whitespace().any(|w| w == "mh_paylas=1")
+        && mount("proje", "/srv/proje", "9p", 0, "trans=virtio,version=9p2000.L,msize=262144,access=any")
+    {
+        log("paylaşılan klasör /srv/proje'ye bağlandı");
     }
     if std::path::Path::new("/etc/metahernes/acilis.sh").exists() {
         let _ = Command::new("/etc/metahernes/acilis.sh").status();
@@ -205,7 +205,7 @@ pub fn main() -> ! {
     let set = sigset(&SIGS);
     unsafe { libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) };
 
-    let mut services = vec![
+    let mut services = [
         Service { name: "sshd", argv: vec!["/usr/sbin/sshd".into(), "-D".into(), "-e".into(), "-E".into(), "/var/log/metahernes/sshd.log".into()], pid: -1, started: Instant::now(), failures: 0 },
         Service { name: "konsol", argv: ["/sbin/agetty", "--autologin", "root", "--noclear", "115200", "ttyS0", "linux"].map(String::from).to_vec(), pid: -1, started: Instant::now(), failures: 0 },
     ];
