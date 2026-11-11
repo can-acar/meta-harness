@@ -1,5 +1,5 @@
 {
-  "apiKeyHelper": "cat /etc/metahernes/ajan.key",
+  "apiKeyHelper": "cat ~/.metahernes/anahtarlar/claude 2>/dev/null || cat /etc/metahernes/ajan.key",
   "permissions": {
     "allow": ["Read", "Glob", "Grep", "Bash", "Write(/srv/proje/.ciktilar/**)"],
     "deny": ["Edit", "Bash(sudo:*)", "Bash(git commit:*)", "Bash(git push:*)", "Read(/etc/metahernes/**)"]

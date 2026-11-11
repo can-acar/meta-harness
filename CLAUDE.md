@@ -48,6 +48,12 @@ Ana makine ── metahernes (crates/metahernes, CLI)  ──>  metahernes-vmm (
 - `mh-ajan <ad> "<görev>"` → `sudo -u ajan-<ad> -H /usr/local/lib/metahernes/ajan-calistir <dizin> <görev>` → `claude -p`
   (stdin /dev/null); kayıt `~/.metahernes/kayitlar/`. `-i` etkileşimli. ajan-calistir yalnızca /srv/* ve kendi evini kabul eder.
 - Ortak API anahtarı `/etc/metahernes/ajan.key` (root:ajanlar 0640), roller `apiKeyHelper: cat …` ile okur.
+- Ajan aracı: `mh-kullanici ajan <ad> <rol> [claude|codex|agy]` → `/etc/metahernes/ajanlar/<ad>.arac`. ajan-calistir aracı
+  bu dosyadan seçer (`claude -p` | `codex exec --skip-git-repo-check` | `agy [rol bayrakları] --print`, stdin /dev/null).
+  Kimlik ajan başına: `mh-ajan <ad> giris` (codex `login --device-auth`, agy etkileşimli OAuth) ya da
+  `mh-anahtar --ajan <ad> [dosya]` → `~/.metahernes/anahtarlar/<araç>` (0600; codex için OPENAI_API_KEY/CODEX_API_KEY) veya
+  agy belirteci `~/.gemini/antigravity-cli/antigravity-oauth-token`. Rol dosyaları: `codex.toml`, `agy-bayraklar`.
+  Codex/agy imaja `MH_ARACLAR=claude,codex,agy` ile girer; ikisi de gerçek hesapla **henüz denenmedi**.
 - `~/.claude.json` önceden doldurulur (onboarding + /srv/proje güven sorusu atlanır).
 - sudoers: `%insanlar ALL=(%ajanlar) NOPASSWD: ajan-calistir`, `%yonetici ALL=(ALL:ALL) NOPASSWD: ALL`.
 
@@ -55,7 +61,7 @@ Ana makine ── metahernes (crates/metahernes, CLI)  ──>  metahernes-vmm (
 ```bash
 sudo ./build.sh                 # cekirdek + rust + rootfs + imaj -> cikti/
 sudo ./build.sh cekirdek|rust|rootfs|imaj
-cargo test                      # 11 birim testi (boot, seri, i8042, virtio-blk, NAT TCP/UDP uçtan uca)
+cargo test                      # birim testleri (boot, seri, i8042, virtio-blk, NAT TCP/UDP uçtan uca)
 cd cikti && ./metahernes calistir [--bellek 2048] [--cpu 1] [--ssh 2222] [--port A:M] [--ag-yok] [--ek "..."]
 ```
 - `mh` statik: `RUSTFLAGS="-C target-feature=+crt-static" cargo build --release -p mh --target x86_64-unknown-linux-gnu`

@@ -26,7 +26,7 @@ while read -r tip ad ek; do
   case "$tip" in
     insan) anahtar=""; [ -f "/tmp/mh-keys/$ad.pub" ] && anahtar="/tmp/mh-keys/$ad.pub"
            mh-kullanici insan "$ad" $anahtar $ek ;;
-    ajan)  mh-kullanici ajan "$ad" "$ek" ;;
+    ajan)  mh-kullanici ajan "$ad" $ek ;;   # ek: <rol> [araç]
   esac
 done < /tmp/kullanicilar.temiz
 
