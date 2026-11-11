@@ -154,7 +154,6 @@ pub fn run(cfg: &Config) -> Result<StopReason, Box<dyn Error>> {
     let disk = Block::open(&cfg.disk, cfg.disk_read_only).map_err(|e| format!("disk açılamadı {}: {e}", cfg.disk.display()))?;
     add_virtio(Box::new(disk), &mut cmdline);
     add_virtio(Box::new(Rng), &mut cmdline);
-    drop(add_virtio);
 
     // Ağ: virtio-net + kullanıcı alanı NAT (ayrı iş parçacığı)
     if cfg.net {
@@ -216,7 +215,7 @@ pub fn run(cfg: &Config) -> Result<StopReason, Box<dyn Error>> {
                     adim += 1;
                     izler.push_back(a.pc);
                     if izler.len() > 40 { izler.pop_front(); }
-                    if adim % 200000 == 0 { eprintln!("\r[iz] {adim} adım, rip={:#x}\r", a.pc); }
+                    if adim.is_multiple_of(200000) { eprintln!("\r[iz] {adim} adım, rip={:#x}\r", a.pc); }
                 }
                 Ok(VcpuExit::Shutdown) => {
                     if trace { eprintln!("\r[iz] son adımlar ({adim}): {:x?}\r", izler); }
