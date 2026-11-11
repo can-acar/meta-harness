@@ -392,7 +392,14 @@ fn fill_random(buf: &mut [u8]) {
     unsafe {
         libc::getrandom(buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
+        for parca in buf.chunks_mut(u32::MAX as usize) {
+            BCryptGenRandom(std::ptr::null_mut(), parca.as_mut_ptr(), parca.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        }
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
     {
         use std::io::Read;
         if let Ok(mut f) = File::open("/dev/urandom") {

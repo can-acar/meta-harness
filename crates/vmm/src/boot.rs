@@ -195,6 +195,56 @@ pub fn segment_from_gdt(entry: u64, index: u16) -> Segment {
     }
 }
 
+pub const CR0_PE: u64 = 1;
+pub const CR0_PG: u64 = 0x8000_0000;
+pub const CR4_PAE: u64 = 0x20;
+pub const EFER_LME: u64 = 0x100;
+pub const EFER_LMA: u64 = 0x400;
+
+/// 64-bit girişte tüm vCPU'ların ortak yazmaç durumu. Arka uçlar bunu kendi yapılarına çevirir;
+/// denetim yazmaçlarında bu bitler mevcut değere VEYA'lanır.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LongModeState {
+    pub code: Segment,
+    pub data: Segment,
+    pub tss: Segment,
+    pub gdt_base: u64,
+    pub gdt_limit: u16,
+    pub idt_base: u64,
+    pub idt_limit: u16,
+    pub cr0: u64,
+    pub cr3: u64,
+    pub cr4: u64,
+    pub efer: u64,
+    pub rflags: u64,
+    pub rip: u64,
+    pub rsp: u64,
+    /// Linux önyükleme protokolü: RSI = zero page adresi.
+    pub rsi: u64,
+}
+
+pub fn long_mode_state(entry: u64, boot_params: u64) -> LongModeState {
+    let mut tss = segment_from_gdt(GDT[3], 3);
+    tss.s = 0;
+    LongModeState {
+        code: segment_from_gdt(GDT[1], 1),
+        data: segment_from_gdt(GDT[2], 2),
+        tss,
+        gdt_base: GDT_ADDR,
+        gdt_limit: (GDT.len() * 8 - 1) as u16,
+        idt_base: IDT_ADDR,
+        idt_limit: 7,
+        cr0: CR0_PE | CR0_PG,
+        cr3: PML4_ADDR,
+        cr4: CR4_PAE,
+        efer: EFER_LME | EFER_LMA,
+        rflags: 0x2,
+        rip: entry,
+        rsp: BOOT_STACK,
+        rsi: boot_params,
+    }
+}
+
 fn checksum(b: &[u8]) -> u8 {
     (0u8).wrapping_sub(b.iter().fold(0u8, |a, x| a.wrapping_add(*x)))
 }
@@ -261,6 +311,15 @@ pub fn setup_mptable(mem: &GuestMem, ncpus: u8) -> Result<(), BootError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uzun_kip_durumu() {
+        let st = long_mode_state(0x100_0200, BOOT_PARAMS_ADDR);
+        assert_eq!((st.code.l, st.code.selector, st.data.selector, st.tss.s), (1, 8, 16, 0));
+        assert_eq!(st.cr0 & (CR0_PE | CR0_PG), CR0_PE | CR0_PG);
+        assert_eq!((st.cr3, st.efer), (PML4_ADDR, EFER_LME | EFER_LMA));
+        assert_eq!((st.rip, st.rsi, st.gdt_limit), (0x100_0200, BOOT_PARAMS_ADDR, 31));
+    }
 
     #[test]
     fn gdt_kod_segmenti() {

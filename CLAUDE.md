@@ -21,11 +21,17 @@ Bu dosya, metahernes'in claude.ai sohbetinde (2026-11-03/04) baştan bu yana nas
 ## Mimari
 ```
 Ana makine ── metahernes (crates/metahernes, CLI)  ──>  metahernes-vmm (crates/vmm)
-                ├─ hipervizör arka ucu: kvm.rs (Linux) ✔ | HVF (macOS) ✗ | WHP (Windows) ✗
-                ├─ OS'tan bağımsız: mem.rs, boot.rs, devices.rs, virtio.rs, net.rs, console.rs
+                ├─ hipervizör arayüzü: hv.rs (Hypervisor / Vm / Vcpu trait'leri, ortak VcpuExit)
+                ├─ arka uçlar: kvm.rs (Linux) ✔ | whp.rs (Windows: yalnızca algılama) | HVF (macOS) ✗
+                ├─ OS'tan bağımsız: vm.rs (aygıt kurulumu + vCPU döngüsü), mem.rs (mmap/VirtualAlloc),
+                │  boot.rs (+ ortak uzun kip yazmaç durumu), devices.rs, virtio.rs, net.rs, console.rs
                 └─ misafir: vmlinuz (kendi çekirdeğimiz) + metahernes.img (ext4)
                       └─ mh (crates/mh, statik): PID 1 init + mh-ajan + mh-kullanici + mh-anahtar + mh-kapat + ajan-calistir
 ```
+- **Yeni arka uç eklemek:** `hv::Hypervisor/Vm/Vcpu`'yu uygula, `lib.rs::run`'da platforma göre seç. Uzun kip
+  yazmaçları `boot::long_mode_state`'ten alınır. WHP'de `WinHvPlatform.dll` çalışma anında yüklenir (özellik kapalıysa
+  `whp::durum()` açıklama + `Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform` gösterir).
+  CI ana makine kodunu Windows/macOS hedefleri için de clippy'den geçirir (yalnızca derleme; çalıştırma denenmedi).
 - **Önyükleme (boot.rs):** bzImage 64-bit giriş (yükleme `pref_address`, giriş +0x200), zero page 0x7000, cmdline 0x20000,
   sayfa tabloları 0x9000 (ilk 4 GiB, 2 MiB sayfalar), GDT 0x500, MP tablosu 0x9fc00 (ACPI tablosu yok). RAM ≤ 3 GiB.
 - **Aygıtlar:** 16550A seri 0x3f8/IRQ4, i8042 0x60 (yalnızca 0xFE sıfırlama → VMM kapanır), virtio-mmio v2 0xd0000000 + n·0x1000,

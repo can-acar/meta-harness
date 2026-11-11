@@ -1,4 +1,4 @@
-//! Misafir fiziksel belleği: tek parça anonim mmap, GPA 0'dan başlar.
+//! Misafir fiziksel belleği: tek parça, GPA 0'dan başlar (Unix: anonim mmap, Windows: VirtualAlloc).
 
 use std::io;
 use std::sync::atomic::{fence, Ordering};
@@ -15,20 +15,8 @@ unsafe impl Sync for GuestMem {}
 
 impl GuestMem {
     pub fn new(size: usize) -> io::Result<Self> {
-        let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                size,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-                -1,
-                0,
-            )
-        };
-        if ptr == libc::MAP_FAILED {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(GuestMem { ptr: ptr as *mut u8, size })
+        let ptr = sys::alloc(size)?;
+        Ok(GuestMem { ptr, size })
     }
 
     pub fn size(&self) -> usize {
@@ -117,7 +105,49 @@ impl GuestMem {
 
 impl Drop for GuestMem {
     fn drop(&mut self) {
-        unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.size) };
+        unsafe { sys::free(self.ptr, self.size) };
+    }
+}
+
+/// Platforma özgü bellek ayırma. Bölge sayfa hizalı, sıfırlanmış ve okunur/yazılır olmalı
+/// (KVM, WHP ve HVF eşleme için sayfa hizası ister).
+#[cfg(unix)]
+mod sys {
+    use std::io;
+
+    pub fn alloc(size: usize) -> io::Result<*mut u8> {
+        #[cfg(target_os = "linux")]
+        let flags = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
+        #[cfg(not(target_os = "linux"))]
+        let flags = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
+        let ptr = unsafe { libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, flags, -1, 0) };
+        if ptr == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(ptr as *mut u8)
+    }
+
+    pub unsafe fn free(ptr: *mut u8, size: usize) {
+        libc::munmap(ptr as *mut libc::c_void, size);
+    }
+}
+
+#[cfg(windows)]
+mod sys {
+    use std::io;
+    use windows_sys::Win32::System::Memory::{VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE};
+
+    pub fn alloc(size: usize) -> io::Result<*mut u8> {
+        // VirtualAlloc 64 KiB hizalı, sıfırlanmış sayfalar verir; fiziksel sayfalar ilk dokunuşta ayrılır.
+        let ptr = unsafe { VirtualAlloc(std::ptr::null(), size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) };
+        if ptr.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(ptr as *mut u8)
+    }
+
+    pub unsafe fn free(ptr: *mut u8, _size: usize) {
+        VirtualFree(ptr as *mut core::ffi::c_void, 0, MEM_RELEASE);
     }
 }
 
