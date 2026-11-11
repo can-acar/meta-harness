@@ -1,0 +1,5 @@
+# İnsanlar, ajan hesaplarında yalnızca ajan-calistir'i çalıştırabilir.
+%insanlar ALL=(%ajanlar) NOPASSWD: /usr/local/lib/metahernes/ajan-calistir
+# Yöneticiler tam yetkili.
+%yonetici ALL=(ALL:ALL) NOPASSWD: ALL
+Defaults:%insanlar !lecture

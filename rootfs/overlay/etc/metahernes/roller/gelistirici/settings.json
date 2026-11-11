@@ -1,0 +1,9 @@
+{
+  "apiKeyHelper": "cat /etc/metahernes/ajan.key",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": ["Read", "Edit", "Write", "Glob", "Grep", "Bash"],
+    "deny": ["Bash(sudo:*)", "Bash(git push:*)", "Read(/etc/metahernes/**)"]
+  },
+  "env": { "DISABLE_AUTOUPDATER": "1", "DISABLE_TELEMETRY": "1" }
+}

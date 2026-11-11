@@ -1,0 +1,14 @@
+[package]
+name = "metahernes-vmm"
+version.workspace = true
+edition.workspace = true
+description = "metahernes sanal makine yöneticisi (VMM) — KVM / HVF / WHP"
+
+[dependencies]
+libc = "0.2"
+smoltcp = { version = "0.14", default-features = false, features = ["std", "log", "medium-ethernet", "proto-ipv4", "socket-tcp", "iface-max-addr-count-2"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+kvm-ioctls = "0.25"
+kvm-bindings = { version = "0.14", features = ["fam-wrappers"] }
+vmm-sys-util = "0.15"

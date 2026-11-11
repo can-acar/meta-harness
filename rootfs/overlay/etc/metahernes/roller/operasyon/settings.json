@@ -1,0 +1,8 @@
+{
+  "apiKeyHelper": "cat /etc/metahernes/ajan.key",
+  "permissions": {
+    "allow": ["Read", "Glob", "Grep", "Bash", "Write(/srv/proje/.ciktilar/**)"],
+    "deny": ["Edit", "Bash(sudo:*)", "Bash(git commit:*)", "Bash(git push:*)", "Read(/etc/metahernes/**)"]
+  },
+  "env": { "DISABLE_AUTOUPDATER": "1", "DISABLE_TELEMETRY": "1" }
+}

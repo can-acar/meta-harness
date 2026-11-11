@@ -1,0 +1,8 @@
+[package]
+name = "mh"
+version.workspace = true
+edition.workspace = true
+description = "metahernes misafir ikilisi: init + kullanıcı/ajan araçları"
+
+[dependencies]
+libc = "0.2"

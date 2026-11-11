@@ -1,0 +1,10 @@
+
+  metahernes — minimal Linux + Claude Code
+  ----------------------------------------
+  claude                     kendi hesabınla Claude Code
+  mh-ajan liste              ajanları göster
+  mh-ajan <ad> "<görev>"     ajana iş ver (ör. mh-ajan gelistirici "testleri yaz")
+  mh-ajan <ad> -i            ajanın hesabında etkileşimli oturum
+  /srv/proje                 ortak çalışma alanı
+  mh-kapat                   sistemi kapat
+

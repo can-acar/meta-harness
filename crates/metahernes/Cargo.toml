@@ -1,0 +1,10 @@
+[package]
+name = "metahernes"
+version.workspace = true
+edition.workspace = true
+description = "metahernes başlatıcı"
+
+[dependencies]
+metahernes-vmm = { path = "../vmm" }
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"

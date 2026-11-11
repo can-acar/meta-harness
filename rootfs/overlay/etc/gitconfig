@@ -1,0 +1,6 @@
+[safe]
+	directory = *
+[core]
+	sharedRepository = group
+[init]
+	defaultBranch = main
